@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[oc]
+.venv/
+
+# Environment Variables & Credentials (CRITICAL)
+.env
+.env.*
+credentials.json
+token.json
+client_secret*.json
+
+# IDEs
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
