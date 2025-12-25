@@ -3,14 +3,16 @@ from pydantic import Field
 from typing import Optional
 
 class Settings(BaseSettings):
+    # 資料庫連線網址 (Zeabur 主要使用此項)
     DATABASE_URL: str
-    POSTGRES_USER: str
-    POSTGRES_PASSWORD: str
-    POSTGRES_DB: str
+    
+    # 以下欄位設為選填，避免在雲端環境因缺少變數而崩潰
+    POSTGRES_USER: Optional[str] = None
+    POSTGRES_PASSWORD: Optional[str] = None
+    POSTGRES_DB: Optional[str] = None
     
     # Google OAuth
     GOOGLE_CLIENT_ID: Optional[str] = None
-    # 支援 .env 中可能的拼寫錯誤
     GOOGLE_CLIENT_SECRET: Optional[str] = Field(None, validation_alias="GOOGLE_CLIENT_SERECT")
     
     BASE_URL: str = "http://localhost:8080"
