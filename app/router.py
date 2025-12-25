@@ -29,10 +29,15 @@ router = APIRouter(prefix="/customers", tags=["customers"])
 
 # --- Google OAuth 設定 ---
 SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
-REDIRECT_URI = "http://localhost:8080/customers/marketing/callback"
+
+# 動態產生 Redirect URI，優先使用環境變數中的 BASE_URL
+def get_redirect_uri():
+    base = settings.BASE_URL.rstrip('/')
+    return f"{base}/customers/marketing/callback"
 
 def get_google_flow():
     if settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET:
+        uri = get_redirect_uri()
         client_config = {
             "web": {
                 "client_id": settings.GOOGLE_CLIENT_ID,
@@ -40,10 +45,10 @@ def get_google_flow():
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
                 "client_secret": settings.GOOGLE_CLIENT_SECRET,
-                "redirect_uris": [REDIRECT_URI]
+                "redirect_uris": [uri]
             }
         }
-        return Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=REDIRECT_URI)
+        return Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=uri)
     return None
 
 # --- 1. 認證相關路由 ---
