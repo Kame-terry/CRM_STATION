@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     
     BASE_URL: str = "http://localhost:8080"
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+        model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-settings = Settings()
+    
+
+    settings = Settings()
+
+    print(f"🌍 [Config] 目前系統使用的網址 (BASE_URL): {settings.BASE_URL}")
+
+    

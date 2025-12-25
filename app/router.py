@@ -38,6 +38,7 @@ def get_redirect_uri():
 def get_google_flow():
     if settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET:
         uri = get_redirect_uri()
+        print(f"🔗 [Auth] 正在為 Google OAuth 使用回呼網址: {uri}")
         client_config = {
             "web": {
                 "client_id": settings.GOOGLE_CLIENT_ID,
