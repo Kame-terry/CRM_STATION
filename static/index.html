@@ -45,8 +45,22 @@
                     <div class="col-md-6"><div class="stat-card"><h5>轉換漏斗</h5><div id="funnel-area" class="mt-4"></div><div class="text-center mt-4 pt-3 border-top"><h1 class="text-success fw-bold" id="funnel-rate" style="font-size:3.5rem">0%</h1></div></div></div>
                     <div class="col-md-6"><div class="stat-card"><h5>客戶公司分佈</h5><div style="height:250px;"><canvas id="segmentChart"></canvas></div></div></div>
                 </div>
-                <div class="table-card"><div class="p-4 border-bottom fw-bold">活動轉換排行</div><table class="custom-table w-100"><tbody id="topEventsBody"></tbody></table></div>
+                <div class="table-card">
+                    <div class="p-3 border-bottom fw-bold text-primary"><i class="bi bi-trophy"></i> 活動轉換成效排行</div>
+                    <table class="custom-table w-100">
+                        <thead>
+                            <tr>
+                                <th>活動名稱</th>
+                                <th class="text-end">報名人數</th>
+                                <th class="text-end">成交人數</th>
+                                <th class="text-end">轉換率 %</th>
+                            </tr>
+                        </thead>
+                        <tbody id="topEventsBody"></tbody>
+                    </table>
+                </div>
             </div>
+
             <div id="customers" class="page-section">
                 <div class="d-flex justify-content-between align-items-center mb-4"><div><h3 class="m-0">客戶管理</h3><span id="custCount" class="text-muted fw-bold"></span></div><button class="btn btn-primary" onclick="openModal('addCustModal')">新增客戶</button></div>
                 <div class="table-card"><table class="custom-table w-100"><thead><tr><th>姓名/Email</th><th>公司</th><th class="text-center">操作</th></tr></thead><tbody id="custTableBody"></tbody></table></div>
@@ -91,10 +105,19 @@
                 <div class="table-card mt-4">
                     <div class="p-3 border-bottom d-flex justify-content-between align-items-center">
                         <span class="fw-bold text-primary"><i class="bi bi-clock-history"></i> 活動發送紀錄</span>
-                        <button class="btn btn-sm btn-outline-secondary" onclick="loadCampaignHistory()"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="loadCampaignHistory()"><i class="bi bi-arrow-clockwise"></i></button>
                     </div>
                     <table class="custom-table w-100">
-                        <thead><tr><th>活動名稱</th><th>狀態</th><th class="text-center">收件</th><th class="text-center">開啟</th><th class="text-center">率</th><th class="text-end">時間</th></tr></thead>
+                        <thead>
+                            <tr>
+                                <th>活動名稱</th>
+                                <th>狀態</th>
+                                <th class="text-center">收件人數</th>
+                                <th class="text-center">已開啟</th>
+                                <th class="text-center">開啟率 %</th>
+                                <th class="text-end">排程時間</th>
+                            </tr>
+                        </thead>
                         <tbody id="mktHistoryBody"></tbody>
                     </table>
                 </div>
