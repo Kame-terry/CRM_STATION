@@ -147,11 +147,15 @@ async def create_campaign(request: CampaignCreateRequest, db: AsyncSession = Dep
         final_time = request.scheduled_at
         
         if not final_time:
-            # 如果沒傳時間，設定 5 秒後發送
-            final_time = datetime.now() + timedelta(seconds=5)
+            # 如果沒傳時間，設定 10 秒後發送
+            # 在台北時區設定下的 datetime.now() 會是正確的
+            final_time = datetime.now() + timedelta(seconds=10)
         else:
-            # 去除時區資訊，統一使用系統本地時間
-            final_time = final_time.replace(tzinfo=None)
+            # 確保傳進來的時間是被視為本地時間 (台北)
+            # 如果帶有時區資訊，轉換它；如果沒有，它已經是台北時間字串轉過來的
+            if final_time.tzinfo is not None:
+                # 這裡假設您的伺服器已經設為 Asia/Taipei，我們統一轉為 naive datetime
+                final_time = final_time.replace(tzinfo=None)
         
         campaign = Campaign(
             name=request.name, subject=request.subject, body=request.body, 
