@@ -10,7 +10,7 @@ class CustomerBase(BaseModel):
     company: Optional[str] = None
 
 class CustomerCreate(CustomerBase):
-    pass
+    events_str: Optional[str] = None # 例如 "2024尾牙, 2025春酒"
 
 class CustomerResponse(CustomerBase):
     id: int

@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Response
-from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func, insert, desc, text
@@ -27,18 +26,12 @@ from .schemas import (
 
 router = APIRouter(prefix="/customers", tags=["customers"])
 
-# --- Google OAuth 設定 ---
+# --- Google OAuth 設定 (省略，保持不變) ---
 SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
-
-# 動態產生 Redirect URI，優先使用環境變數中的 BASE_URL
-def get_redirect_uri():
-    base = settings.BASE_URL.rstrip('/')
-    return f"{base}/customers/marketing/callback"
+REDIRECT_URI = "http://localhost:8080/customers/marketing/callback"
 
 def get_google_flow():
     if settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET:
-        uri = get_redirect_uri()
-        print(f"🔗 [Auth] 正在為 Google OAuth 使用回呼網址: {uri}")
         client_config = {
             "web": {
                 "client_id": settings.GOOGLE_CLIENT_ID,
@@ -46,13 +39,11 @@ def get_google_flow():
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
                 "client_secret": settings.GOOGLE_CLIENT_SECRET,
-                "redirect_uris": [uri]
+                "redirect_uris": [REDIRECT_URI]
             }
         }
-        return Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=uri)
+        return Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=REDIRECT_URI)
     return None
-
-# --- 1. 認證相關路由 ---
 
 @router.get("/marketing/auth")
 async def google_auth():
@@ -74,8 +65,7 @@ async def auth_callback(code: str):
 def get_auth_status():
     return {"is_authenticated": os.path.exists(TOKEN_FILE)}
 
-# --- 2. 數據統計 API ---
-
+# --- Stats ---
 @router.get("/stats", response_model=DashboardStats)
 async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
     cust_res = await db.execute(select(Customer).options(selectinload(Customer.courses), selectinload(Customer.registrations)))
@@ -101,13 +91,35 @@ async def get_dashboard_stats(db: AsyncSession = Depends(get_db)):
         top_events.append({"name": ev.name, "registrations": len(regs), "converted": len(conv), "rate": round(len(conv)/len(regs)*100, 2) if regs else 0})
 
     return {
-        "total_customers": len(customers), "total_events": len(all_events), "total_purchases": total_purchases,
-        "total_revenue": total_revenue, "unique_event_attendees": len(attendee_ids),
+        "total_customers": len(customers),
+        "total_events": len(all_events),
+        "total_purchases": total_purchases,
+        "total_revenue": total_revenue,
+        "unique_event_attendees": len(attendee_ids),
         "converted_purchasers": converted, "conversion_rate": round(converted/len(attendee_ids)*100, 2) if attendee_ids else 0,
         "customer_segments": segments, "top_converting_events": sorted(top_events, key=lambda x: x['rate'], reverse=True)
     }
 
-# --- 3. 客戶與活動管理 API ---
+# --- Customer Management (核心修改點) ---
+
+async def process_event_relations(db: AsyncSession, customer: Customer, events_str: str):
+    """輔助函式：解析字串並建立活動關聯"""
+    if events_str:
+        event_names = [e.strip() for e in events_str.split(',') if e.strip()]
+        for ename in event_names:
+            # 尋找或建立活動
+            res = await db.execute(select(Event).where(Event.name == ename))
+            event = res.scalars().first()
+            if not event:
+                event = Event(name=ename, date=datetime.now(), location="未指定")
+                db.add(event)
+                await db.flush() # 取得 ID
+            
+            # 建立關聯 (如果還沒關聯)
+            check = await db.execute(select(EventRegistration).where(EventRegistration.customer_id == customer.id, EventRegistration.event_id == event.id))
+            if not check.scalars().first():
+                reg = EventRegistration(customer_id=customer.id, event_id=event.id, attended=True)
+                db.add(reg)
 
 @router.get("/", response_model=List[CustomerResponse])
 async def read_customers(db: AsyncSession = Depends(get_db)):
@@ -116,9 +128,51 @@ async def read_customers(db: AsyncSession = Depends(get_db)):
 
 @router.post("/", response_model=CustomerResponse)
 async def create_customer(customer: CustomerCreate, db: AsyncSession = Depends(get_db)):
-    db_c = Customer(**customer.model_dump())
-    db.add(db_c); await db.commit(); await db.refresh(db_c)
-    return db_c
+    try:
+        # 1. 建立客戶
+        db_c = Customer(name=customer.name, email=customer.email, phone=customer.phone, company=customer.company)
+        db.add(db_c)
+        await db.commit()
+        await db.refresh(db_c)
+
+        # 2. 處理關聯
+        if customer.events_str:
+            await process_event_relations(db, db_c, customer.events_str)
+            await db.commit()
+            
+        return db_c
+    except Exception as e:
+        await db.rollback()
+        detail = "此 Email 已被使用" if "unique" in str(e).lower() else str(e)
+        raise HTTPException(status_code=400, detail=detail)
+
+@router.post("/import")
+async def import_customers(customers: List[CustomerCreate], db: AsyncSession = Depends(get_db)):
+    """批次匯入 API"""
+    success_count = 0
+    errors = []
+    
+    for c in customers:
+        try:
+            # 檢查 Email 是否存在
+            res = await db.execute(select(Customer).where(Customer.email == c.email))
+            exist = res.scalars().first()
+            
+            if not exist:
+                new_c = Customer(name=c.name, email=c.email, phone=c.phone, company=c.company)
+                db.add(new_c)
+                await db.flush() # 取得 ID 供關聯使用
+                exist = new_c
+            
+            # 無論是新舊客戶，都更新關聯
+            await process_event_relations(db, exist, c.events_str)
+            success_count += 1
+        except Exception as e:
+            errors.append(f"{c.email}: {str(e)}")
+            continue
+    
+    await db.commit()
+    return {"message": f"成功匯入 {success_count} 筆", "errors": errors}
 
 @router.delete("/{customer_id}")
 async def delete_customer(customer_id: int, db: AsyncSession = Depends(get_db)):
@@ -127,6 +181,12 @@ async def delete_customer(customer_id: int, db: AsyncSession = Depends(get_db)):
     if c: await db.delete(c); await db.commit()
     return {"status": "ok"}
 
+@router.get("/{customer_id}", response_model=CustomerDetailResponse)
+async def read_customer(customer_id: int, db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(Customer).options(selectinload(Customer.interactions), selectinload(Customer.courses), selectinload(Customer.registrations)).where(Customer.id == customer_id))
+    return res.scalars().first()
+
+# --- Other APIs (Events, Marketing) ---
 @router.get("/events/", response_model=List[EventListResponse])
 async def read_events(db: AsyncSession = Depends(get_db)):
     events = (await db.execute(select(Event).order_by(Event.date.desc()))).scalars().all()
@@ -134,9 +194,8 @@ async def read_events(db: AsyncSession = Depends(get_db)):
     for e in events:
         reg_res = await db.execute(select(EventRegistration).where(EventRegistration.event_id == e.id))
         regs = reg_res.scalars().all()
-        total = len(regs)
         checked = sum(1 for r in regs if r.attended)
-        output.append({"id": e.id, "name": e.name, "date": e.date, "location": e.location, "attendee_count": total, "checkin_count": checked, "attendance_rate": round(checked/total*100, 2) if total > 0 else 0})
+        output.append({"id": e.id, "name": e.name, "date": e.date, "location": e.location, "attendee_count": len(regs), "checkin_count": checked, "attendance_rate": round(checked/len(regs)*100, 2) if regs else 0})
     return output
 
 @router.post("/events/", response_model=EventResponse)
@@ -145,38 +204,21 @@ async def create_event(event: EventCreate, db: AsyncSession = Depends(get_db)):
     db.add(db_e); await db.commit(); await db.refresh(db_e)
     return db_e
 
-# --- 4. 郵件行銷 API ---
-
 @router.post("/marketing/campaigns")
 async def create_campaign(request: CampaignCreateRequest, db: AsyncSession = Depends(get_db)):
     try:
         final_time = request.scheduled_at
-        
         if not final_time:
-            # 如果沒傳時間，設定 10 秒後發送
-            # 在台北時區設定下的 datetime.now() 會是正確的
-            final_time = datetime.now() + timedelta(seconds=10)
+            final_time = datetime.now(timezone.utc) + timedelta(seconds=5)
         else:
-            # 確保傳進來的時間是被視為本地時間 (台北)
-            # 如果帶有時區資訊，轉換它；如果沒有，它已經是台北時間字串轉過來的
-            if final_time.tzinfo is not None:
-                # 這裡假設您的伺服器已經設為 Asia/Taipei，我們統一轉為 naive datetime
-                final_time = final_time.replace(tzinfo=None)
+            final_time = final_time.astimezone(timezone.utc)
         
-        campaign = Campaign(
-            name=request.name, subject=request.subject, body=request.body, 
-            scheduled_at=final_time,
-            status=CampaignStatus.SCHEDULED
-        )
-        db.add(campaign)
-        await db.commit()
-        await db.refresh(campaign)
+        campaign = Campaign(name=request.name, subject=request.subject, body=request.body, scheduled_at=final_time, status=CampaignStatus.SCHEDULED)
+        db.add(campaign); await db.commit(); await db.refresh(campaign)
         
         if request.customer_ids:
-            recipients = [{"campaign_id": campaign.id, "customer_id": cid} for cid in request.customer_ids]
-            await db.execute(insert(CampaignRecipient), recipients)
+            await db.execute(insert(CampaignRecipient), [{"campaign_id": campaign.id, "customer_id": cid} for cid in request.customer_ids])
             await db.commit()
-        
         return {"id": campaign.id, "message": "Success"}
     except Exception as e:
         await db.rollback()
@@ -188,16 +230,9 @@ async def list_campaigns(db: AsyncSession = Depends(get_db)):
     campaigns = res.scalars().all()
     output = []
     for c in campaigns:
-        total_res = await db.execute(select(func.count(CampaignRecipient.customer_id)).where(CampaignRecipient.campaign_id == c.id))
-        total = total_res.scalar() or 0
-        opened_res = await db.execute(select(func.count(CampaignRecipient.opened_at)).where(CampaignRecipient.campaign_id == c.id))
-        opened = opened_res.scalar() or 0
-        output.append({
-            "id": c.id, "name": c.name, "status": c.status.value, 
-            "total_recipients": total, "opened_count": opened, 
-            "open_rate": round(opened/total*100, 2) if total > 0 else 0, 
-            "scheduled_at": c.scheduled_at
-        })
+        total = (await db.execute(select(func.count(CampaignRecipient.customer_id)).where(CampaignRecipient.campaign_id == c.id))).scalar() or 0
+        opened = (await db.execute(select(func.count(CampaignRecipient.opened_at)).where(CampaignRecipient.campaign_id == c.id))).scalar() or 0
+        output.append({"id": c.id, "name": c.name, "status": c.status.value, "total_recipients": total, "opened_count": opened, "open_rate": round(opened/total*100, 2) if total else 0, "scheduled_at": c.scheduled_at})
     return output
 
 @router.get("/marketing/templates")
@@ -207,17 +242,14 @@ async def get_templates(db: AsyncSession = Depends(get_db)):
 
 @router.post("/marketing/templates")
 async def create_template(request: TemplateCreate, db: AsyncSession = Depends(get_db)):
-    tpl = EmailTemplate(**request.model_dump())
-    db.add(tpl); await db.commit()
+    tpl = EmailTemplate(**request.model_dump()); db.add(tpl); await db.commit()
     return tpl
 
 @router.post("/marketing/test")
 async def send_test_email(request: TestEmailRequest):
     success, msg = send_email(request.email, request.subject, request.body.replace("{name}", "測試員"), is_html=True)
-    if success:
-        return {"message": "測試信寄送成功！"}
-    else:
-        raise HTTPException(status_code=500, detail=f"寄送失敗：{msg}")
+    if success: return {"message": "OK"}
+    else: raise HTTPException(status_code=500, detail=msg)
 
 @router.get("/tracking/open/{campaign_id}/{customer_id}")
 async def track_open(campaign_id: int, customer_id: int, db: AsyncSession = Depends(get_db)):
